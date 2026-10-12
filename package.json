@@ -1,0 +1,13 @@
+{
+  "name": "creadorcraft-auth",
+  "version": "1.0.0",
+  "description": "Auth API para CreadorCraft Adventure",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "discord.js": "^14.27.0"
+  }
+}
