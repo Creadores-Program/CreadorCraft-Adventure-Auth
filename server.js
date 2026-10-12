@@ -1,8 +1,10 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const pendingTickets = new Map();
 const pool = new Pool({
@@ -18,7 +20,15 @@ pool.connect((err, client, release) => {
     release();
 });
 
-app.get('/wakeup', (req, res) => {
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: "Demasiados intentos desde esta IP, intenta más tarde." },
+    standardHeaders: true,
+    legacyHeaders: true,
+});
+
+app.post('/wakeup', loginLimiter, (req, res) => {
     res.setHeader('Content-Type', 'application/octet-stream');
     res.status(200).send(Buffer.from([0x01]));
 });
