@@ -1,10 +1,12 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const cors = require('cors');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const app = express();
 app.set('trust proxy', 1);
+app.use(cors());
 const PORT = process.env.PORT || 3000;
 const pendingTickets = new Map();
 const pool = new Pool({
