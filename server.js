@@ -194,7 +194,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages]
 });
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     console.log(`🤖 Bot conectado como ${client.user.tag}`);
 
     const commands = [
@@ -214,6 +214,18 @@ client.once('ready', async () => {
     } catch (error) {
         console.error('❌ Error al registrar comandos:', error);
     }
+    const statuses = [
+        { name: 'CreadorCraft Adventure ⚔️', type: ActivityType.Playing },
+        { name: '¿Saldrá antes que GTA 6? 💀', type: ActivityType.Watching },
+        { name: 'Usa /login en DM 🔑', type: ActivityType.Competing },
+        { name: 'Próximamente...', type: ActivityType.Streaming, url: 'https://twitch.tv/trollhunters501' }
+    ];
+    let index = 0;
+    setInterval(() => {
+        const currentStatus = statuses[index];
+        client.user.setActivity(currentStatus.name, { type: currentStatus.type, url: currentStatus.url });
+        index = (index + 1) % statuses.length;
+    }, 10000);
 });
 
 client.on('interactionCreate', async interaction => {
