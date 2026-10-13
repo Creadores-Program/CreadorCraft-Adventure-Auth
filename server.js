@@ -3,13 +3,16 @@ const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const crypto = require('crypto');
 const { Pool } = require('pg');
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes, SlashCommandBuilder } = require('discord.js');
+
 const app = express();
 app.set('trust proxy', 1);
 app.use(cors());
+
 const PORT = process.env.PORT || 3000;
 const pendingTickets = new Map();
 const pendingCodes = new Map();
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
@@ -28,7 +31,7 @@ const loginLimiter = rateLimit({
     max: 10,
     standardHeaders: true,
     legacyHeaders: true,
-    header: (req, res, next, options) => {
+    handler: (req, res) => {
         res.status(429).end();
     }
 });
@@ -197,53 +200,118 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('login')
-            .setDescription('Genera tu código de verificación de 6 bytes para CreadorCraft Adventure')
+            .setDescription('Genera tu código de verificación de 6 bytes para CreadorCraft Adventure'),
+        new SlashCommandBuilder()
+            .setName('deletelogin')
+            .setDescription('Elimina permanentemente tu cuenta y datos del sistema central')
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
 
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Comandos registrados.');
+        console.log('✅ Comandos registrados exitosamente.');
     } catch (error) {
         console.error('❌ Error al registrar comandos:', error);
     }
 });
 
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === 'login') {
+    if (interaction.isChatInputCommand()) {
         if (interaction.channel.type !== ChannelType.DM) {
             return interaction.reply({
-                content: '❌ **Seguridad:** El comando `/login` solo puede ejecutarse en **Mensaje Privado (Chat Directo)** con el bot.',
+                content: '❌ **Seguridad:** Este comando solo puede ejecutarse en **Mensaje Privado (Chat Directo)** con el bot.',
                 ephemeral: true
             });
         }
 
         const discordId = interaction.user.id;
-        const username = interaction.user.username;
 
-        const codeBuffer = crypto.randomBytes(6);
-        const codeHex = codeBuffer.toString('hex').toUpperCase();
+        if (interaction.commandName === 'login') {
+            const username = interaction.user.username;
+            const codeBuffer = crypto.randomBytes(6);
+            const codeHex = codeBuffer.toString('hex').toUpperCase();
 
-        if (pendingCodes.has(discordId)) {
-            clearTimeout(pendingCodes.get(discordId).timeout);
-        }
+            if (pendingCodes.has(discordId)) {
+                clearTimeout(pendingCodes.get(discordId).timeout);
+            }
 
-        const timeout = setTimeout(() => {
-            pendingCodes.delete(codeHex);
-        }, 180000);
+            const timeout = setTimeout(() => {
+                pendingCodes.delete(codeHex);
+            }, 180000);
 
-        pendingCodes.set(codeHex, { discordId, username, codeBuffer, timeout });
+            pendingCodes.set(codeHex, { discordId, username, codeBuffer, timeout });
 
-        const numericArrayText = Array.from(codeBuffer).join(', ');
+            const numericArrayText = Array.from(codeBuffer).join(', ');
+            
+            await interaction.reply({
+                content: `🔑 **Código de Verificación CreadorCraft Adventure**\n\nTu código de 6 bytes es:\n\`\`\`[${numericArrayText}]\`\`\`\n*(Ingrésalo en tu cliente de juego antes de 3 minutos)*`,
+                ephemeral: true
+            });
+        } 
         
-        await interaction.reply({
-            content: `🔑 **Código de Verificación CreadorCraft Adventure**\n\nTu código de 6 bytes es:\n\`\`\`[${numericArrayText}]\`\`\`\n*(Ingrésalo en tu cliente de juego antes de 3 minutos)*`,
-            ephemeral: true
-        });
-    }//else if(interaction.commandName === 'deletelogin'){}
+        else if (interaction.commandName === 'deletelogin') {
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('confirm_delete')
+                        .setLabel('Sí, eliminar permanentemente')
+                        .setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder()
+                        .setCustomId('cancel_delete')
+                        .setLabel('Cancelar')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.reply({
+                content: '⚠️ **ADVERTENCIA DE ELIMINACIÓN DE CUENTA** ⚠️\n\n' +
+                         'Estás a punto de borrar **permanentemente** tu cuenta y tu MasterToken de CreadorCraft Adventure.\n\n' +
+                         '• **Esta acción NO es reversible.**\n' +
+                         '• Si deseas borrar tus datos guardados en servidores de terceros o en el servidor principal, **debes solicitar la eliminación directamente en cada uno de esos servidores antes de continuar**.\n\n' +
+                         '¿Estás totalmente seguro de que deseas proceder?',
+                components: [row],
+                ephemeral: true
+            });
+        }
+    }
+
+    else if (interaction.isButton()) {
+        if (interaction.channel.type !== ChannelType.DM) return;
+
+        const discordId = interaction.user.id;
+
+        if (interaction.customId === 'cancel_delete') {
+            await interaction.update({
+                content: '✅ Operación cancelada. Tus datos están seguros.',
+                components: []
+            });
+        } 
+        
+        else if (interaction.customId === 'confirm_delete') {
+            try {
+                const deleteQuery = `DELETE FROM usuarios WHERE discord_id = $1;`;
+                const result = await pool.query(deleteQuery, [discordId]);
+
+                if (result.rowCount > 0) {
+                    await interaction.update({
+                        content: '🗑️ **Cuenta eliminada con éxito.** Tus datos centralizados han sido borrados de la base de datos principal.',
+                        components: []
+                    });
+                } else {
+                    await interaction.update({
+                        content: 'ℹ️ No se encontró ninguna cuenta asociada a tu usuario de Discord en el sistema central.',
+                        components: []
+                    });
+                }
+            } catch (dbErr) {
+                console.error('❌ Error al eliminar cuenta en la base de datos:', dbErr);
+                await interaction.update({
+                    content: '❌ Ocurrió un error en el servidor al intentar procesar la eliminación. Inténtalo más tarde.',
+                    components: []
+                });
+            }
+        }
+    }
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
