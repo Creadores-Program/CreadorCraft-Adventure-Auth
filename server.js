@@ -84,9 +84,104 @@ app.post('/login', loginLimiter, express.raw({ type: 'application/octet-stream',
        .send(responseBuffer);
 });
 
-app.post('/get-ticket', loginLimiter, express.raw({ type: 'application/octet-stream', limit: '1kb' }), (req, res) => {});
+app.post('/get-ticket', loginLimiter, express.raw({ type: 'application/octet-stream', limit: '1kb' }), async (req, res) => {
+    const buffer = req.body;
+    if (!buffer || buffer.length < 33) {
+        return res.status(400).end();
+    }
+    const masterTokenBytes = buffer.slice(0, 32);
+    const ipLength = buffer.readUInt8(32);
+    if (buffer.length !== 33 + ipLength) {
+        return res.status(400).end();
+    }
+    const serverIp = buffer.toString('utf8', 33, 33 + ipLength);
+    if(serverIp.trim().length < 3){
+        return res.status(400).end();
+    }
+    try {
+        const query = `
+            SELECT discord_id, username 
+            FROM usuarios 
+            WHERE master_token = $1 AND expires_at > NOW();
+        `;
+        const result = await pool.query(query, [masterTokenBytes]);
 
-app.post('/verify-ticket', loginLimiter, express.raw({ type: 'application/octet-stream', limit: '1kb' }), (req, res) => {});
+        if (result.rows.length === 0) {
+            return res.status(401).end();
+        }
+
+        const { discord_id: discordId, username } = result.rows[0];
+
+        const ticketBuffer = crypto.randomBytes(6);
+        const ticketHex = ticketBuffer.toString('hex').toUpperCase();
+
+        if (pendingTickets.has(ticketHex)) {
+            clearTimeout(pendingTickets.get(ticketHex).timeout);
+        }
+
+        const timeout = setTimeout(() => {
+            pendingTickets.delete(ticketHex);
+        }, 12000);
+
+        pendingTickets.set(ticketHex, {
+            discordId: discordId.toString(),
+            username,
+            serverIp,
+            timeout
+        });
+
+        res.status(200)
+           .set('Content-Type', 'application/octet-stream')
+           .send(ticketBuffer);
+
+    } catch (dbErr) {
+        console.error('❌ Error en base de datos al procesar get-ticket:', dbErr);
+        return res.status(500).end();
+    }
+});
+
+app.post('/verify-ticket', loginLimiter, express.raw({ type: 'application/octet-stream', limit: '1kb' }), (req, res) => {
+    const buffer = req.body;
+
+    if (!buffer || buffer.length < 7) {
+        return res.status(401).end();
+    }
+    const ticketBuffer = buffer.slice(0, 6);
+    const ticketHex = ticketBuffer.toString('hex').toUpperCase();
+    const ipLength = buffer.readUInt8(6);
+
+    if (buffer.length !== 7 + ipLength) {
+        return res.status(401).end();
+    }
+
+    const serverIp = buffer.toString('utf8', 7, 7 + ipLength);
+    const ticketData = pendingTickets.get(ticketHex);
+
+    if (!ticketData || ticketData.serverIp !== serverIp) {
+        return res.status(401).end();
+    }
+
+    clearTimeout(ticketData.timeout);
+    pendingTickets.delete(ticketHex);
+
+    const { discordId, username } = ticketData;
+    const usernameBytes = Buffer.from(username, 'utf8');
+
+    const responseBuffer = Buffer.alloc(8 + 1 + usernameBytes.length);
+
+    let offset = 0;
+    responseBuffer.writeBigUInt64BE(BigInt(discordId), offset);
+    offset += 8;
+
+    responseBuffer.writeUInt8(usernameBytes.length, offset);
+    offset += 1;
+
+    usernameBytes.copy(responseBuffer, offset);
+
+    res.status(200)
+       .set('Content-Type', 'application/octet-stream')
+       .send(responseBuffer);
+});
 
 app.listen(PORT, () => {
     console.info(`🌐 Servidor Web API corriendo en puerto ${PORT}`);
@@ -109,7 +204,7 @@ client.once('ready', async () => {
 
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Comando /login registrado.');
+        console.log('✅ Comandos registrados.');
     } catch (error) {
         console.error('❌ Error al registrar comandos:', error);
     }
@@ -148,7 +243,7 @@ client.on('interactionCreate', async interaction => {
             content: `🔑 **Código de Verificación CreadorCraft Adventure**\n\nTu código de 6 bytes es:\n\`\`\`[${numericArrayText}]\`\`\`\n*(Ingrésalo en tu cliente de juego antes de 3 minutos)*`,
             ephemeral: true
         });
-    }
+    }//else if(interaction.commandName === 'deletelogin'){}
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
