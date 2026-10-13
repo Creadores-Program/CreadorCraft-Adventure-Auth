@@ -225,7 +225,7 @@ client.once('clientReady', async () => {
         const currentStatus = statuses[index];
         client.user.setActivity(currentStatus.name, { type: currentStatus.type, url: currentStatus.url });
         index = (index + 1) % statuses.length;
-    }, 10000);
+    }, 60000);
 });
 
 client.on('interactionCreate', async interaction => {
